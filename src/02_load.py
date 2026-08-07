@@ -13,7 +13,7 @@ UF_HISTORICA_CSV = DATA_DIR / "uf_historica.csv"
 
 DATASET = "raw"
 LOCATION = "southamerica-west1"
-ARCHIVOS = [
+ARCHIVOS = [  # (ruta local, destino en el bucket, nombre de tabla en BigQuery)
     (PROPIEDADES_CSV, "raw/propiedades.csv", "propiedades"),
     (UF_HISTORICA_CSV, "raw/uf_historica.csv", "uf_historica"),
 ]
@@ -31,14 +31,16 @@ def subir_a_gcs(
     max_retries: int = MAX_RETRIES,
     backoff_base: int = BACKOFF_BASE_SECONDS,
 ) -> str:
-    bucket = storage_client.bucket(bucket_name)
-    blob = bucket.blob(blob_name)
+    bucket = storage_client.bucket(bucket_name)  # apunta al bucket
+    blob = bucket.blob(
+        blob_name
+    )  # 'blob' = el archivo dentro del bucket, todavía no existe
     uri = f"gs://{bucket_name}/{blob_name}"
 
     for intento in range(1, max_retries + 1):
         try:
-            blob.upload_from_filename(str(path))
-        except GoogleAPIError as e:
+            blob.upload_from_filename(str(path))  # sube el contenido real
+        except GoogleAPIError as e:  # equivalente a requests.RequestException
             logger.warning(
                 "Intento %d/%d falló al subir %s a %s: %s",
                 intento,
@@ -53,7 +55,7 @@ def subir_a_gcs(
             logger.info(
                 "Subido %s (%d bytes) a %s", path.name, path.stat().st_size, uri
             )
-            return uri
+            return uri  # éxito -> corta el loop y la función acá mismo
 
     raise RuntimeError(f"No se pudo subir {path} a {uri} tras {max_retries} intentos")
 
@@ -71,8 +73,8 @@ def cargar_a_bigquery(
     table_id = f"{project_id}.{dataset}.{table_name}"
     job_config = bigquery.LoadJobConfig(
         source_format=bigquery.SourceFormat.CSV,
-        skip_leading_rows=1,
-        autodetect=True,
+        skip_leading_rows=1,  # salta la fila de encabezados del CSV
+        autodetect=True,  # BigQuery adivina los tipos de columna (solo)
         write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,  # reemplaza la tabla en vez de duplicar filas
     )
 
@@ -94,7 +96,9 @@ def cargar_a_bigquery(
             if intento < max_retries:
                 time.sleep(backoff_base**intento)
         else:
-            tabla = bq_client.get_table(table_id)
+            tabla = bq_client.get_table(
+                table_id
+            )  # vuelve a preguntar los metadatos ya cargados
             logger.info(
                 "Cargadas %d filas en %s desde %s", tabla.num_rows, table_id, uri
             )
@@ -106,18 +110,20 @@ def cargar_a_bigquery(
 
 
 def main() -> None:
-    load_dotenv()
+    load_dotenv()  # lee .env y lo mete como variables de entorno
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
     )
 
-    project_id = os.environ["GCP_PROJECT_ID"]
+    project_id = os.environ["GCP_PROJECT_ID"]  # datos de .env
     bucket_name = os.environ["GCS_BUCKET_NAME"]
 
-    storage_client = storage.Client(project=project_id)
-    bq_client = bigquery.Client(project=project_id)
+    storage_client = storage.Client(
+        project=project_id
+    )  # conexión autenticada a Storage
+    bq_client = bigquery.Client(project=project_id)  # conexión autenticada a BigQuery
 
-    for path, blob_name, table_name in ARCHIVOS:
+    for path, blob_name, table_name in ARCHIVOS:  # desempaqueta cada tupla de ARCHIVOS
         uri = subir_a_gcs(path, blob_name, bucket_name, storage_client)
         cargar_a_bigquery(uri, table_name, DATASET, project_id, LOCATION, bq_client)
 
